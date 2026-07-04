@@ -1,0 +1,13 @@
+# Development override: build the image locally instead of pulling from GHCR.
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+#
+# Merges on top of docker-compose.yml, keeping its ports, env, and volumes.
+services:
+  mieru-web-ui:
+    image: mieru-web-ui:dev
+    pull_policy: build
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        MITA_VERSION: ${MITA_VERSION:-v3.34.0}

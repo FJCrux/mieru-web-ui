@@ -1,0 +1,13 @@
+/mieru-web-ui
+/web/dist/
+/web/node_modules/
+/data/
+*.db
+.DS_Store
+web/tsconfig.tsbuildinfo
+
+# Local config and runtime state (compose volumes, dev data)
+.env
+/panel-data/
+/mita-config/
+/.devdata/

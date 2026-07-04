@@ -1,0 +1,34 @@
+# Sharing client configs
+
+Each mieru user needs the server address plus their credentials. The panel
+generates these for you.
+
+## From the Users page
+
+Click **Share** on a user to get:
+
+- a **mierus://** link and QR code (simple format),
+- a **mieru://** link and QR code (full config),
+- the client config JSON to download.
+
+Set **Public host** in Settings first - it's the address clients connect to.
+
+## Expiring links
+
+The **Link** tab creates a tokenized URL (`https://host/s/<token>`) that expires
+(15 min / 1 hour / 24 hours). Send that instead of the raw credentials:
+
+- The token is unguessable and single-purpose.
+- The link auto-expires; a leaked old link stops working.
+- Resetting the user's password invalidates their links immediately.
+- The link lives on a separate path (`SHARE_PATH`, default `/s`) and never
+  reveals the admin panel's location.
+
+The recipient opens the link and sees a page with the QR and connection string -
+no login, no admin UI.
+
+## Users created outside the panel
+
+The panel can only build links for users it created (it stores their password;
+mita keeps only a hash). For a user added via the CLI, reset their password in
+the panel to enable sharing.

@@ -1,0 +1,13 @@
+.git
+.github
+web/node_modules
+web/dist
+mieru-web-ui
+*.db
+.env
+panel-data
+mita-config
+.devdata
+.DS_Store
+docs
+*.md

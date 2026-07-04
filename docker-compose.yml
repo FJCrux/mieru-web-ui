@@ -1,0 +1,50 @@
+# Production: pull the prebuilt image from GHCR.
+#   docker compose up -d
+#
+# Local development builds from source instead, via the override file:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+#
+# Configure via .env (copy from .env.example). docker compose loads it
+# automatically for the ${VAR} interpolation below.
+services:
+  mieru-web-ui:
+    image: ghcr.io/fjcrux/mieru-web-ui:${MIERU_WEB_UI_TAG:-latest}
+    container_name: mieru-web-ui
+    restart: unless-stopped
+    # Bridge networking: the panel and the proxy ports are published explicitly.
+    ports:
+      # Panel — published on PANEL_BIND_IP (default 127.0.0.1, i.e. loopback
+      # only; reach it via an SSH tunnel or a reverse proxy). Set PANEL_BIND_IP
+      # to 0.0.0.0 or a specific IP to expose it (do that only behind TLS).
+      - "${PANEL_BIND_IP:-127.0.0.1}:${PANEL_PORT:-8686}:${PANEL_PORT:-8686}"
+      # mita proxy port(s) — must match what you set in Network. One port is
+      # enough; set PROXY_PORTS to a range (e.g. 2012-2022) only if you use a
+      # range there for obfuscation.
+      - "${PROXY_PORTS:-2012}:${PROXY_PORTS:-2012}"
+      - "${PROXY_PORTS:-2012}:${PROXY_PORTS:-2012}/udp"
+    environment:
+      PANEL_PORT: ${PANEL_PORT:-8686}
+      # Same value drives both the publish above and mita's port bindings, so
+      # they always agree and you manage ports in one place.
+      PROXY_PORTS: ${PROXY_PORTS:-2012}
+      PANEL_ADMIN_USER: ${PANEL_ADMIN_USER:-}
+      PANEL_ADMIN_PASSWORD: ${PANEL_ADMIN_PASSWORD:-}
+      PANEL_URL: ${PANEL_URL:-}
+      PANEL_BASE_PATH: ${PANEL_BASE_PATH:-}
+      SHARE_PATH: ${SHARE_PATH:-/s}
+      PANEL_TLS_CERT: ${PANEL_TLS_CERT:-}
+      PANEL_TLS_KEY: ${PANEL_TLS_KEY:-}
+    volumes:
+      - ./panel-data:/data
+      - ./mita-config:/etc/mita
+      # Optional: drop your own geoip.dat files here (see docs).
+      # - ./geoip:/data/geoip
+
+# --- host networking alternative ---
+# If your proxy uses wide/awkward port ranges, host networking avoids
+# enumerating them. Replace the "ports:" block above with:
+#
+#     network_mode: host
+#     environment:
+#       PANEL_BIND: "127.0.0.1"   # panel only on loopback in host mode
+#       ...
