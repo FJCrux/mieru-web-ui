@@ -67,6 +67,7 @@ export interface UserInfo {
   quotas: Quota[]
   allowPrivateIP: boolean
   hasSecret: boolean
+  hasSubscription: boolean
   metrics: Record<string, number>
   lastActiveUnixMs: number
 }
@@ -116,6 +117,17 @@ export interface ShareToken {
   expiresAt: number
 }
 
+export interface SubscriptionStatus {
+  exists: boolean
+  url?: string
+  createdAt?: number
+}
+
+export interface SubscriptionToken {
+  url: string
+  createdAt: number
+}
+
 export interface EgressProxy {
   name: string
   host: string
@@ -128,6 +140,7 @@ export interface EgressRule {
   domains: string[]
   cidrs: string[]
   geo: string[]
+  sites: string[]
   action: string // PROXY, DIRECT, REJECT
   proxies: string[]
 }
@@ -147,9 +160,16 @@ export interface GeoCategory {
   cidrs: number
 }
 
+export interface GeoSiteCategory {
+  code: string
+  domains: number
+}
+
 export interface GeoipState {
   datasets: GeoDataset[]
   categories: GeoCategory[]
+  siteDatasets: GeoDataset[]
+  siteCategories: GeoSiteCategory[]
 }
 
 export interface Peer {
@@ -213,5 +233,7 @@ export interface Settings {
   panelUrl: string
   basePath: string
   sharePath: string
+  subPath: string
+  subPort: string
   restartPending: boolean
 }

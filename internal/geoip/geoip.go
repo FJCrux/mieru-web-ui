@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Package geoip maintains xray-format geoip.dat datasets on disk and expands
-// a category code (e.g. "cn", "ru-blocked") into the CIDR list that mieru's
-// egress rules understand. mieru has no geoip engine of its own, so the panel
-// does the translation.
+// Package geoip maintains xray-format geoip.dat and geosite.dat datasets on
+// disk and expands a category code into the CIDR list (geoip) or domain-suffix
+// list (geosite) that mieru's egress rules understand. mieru has no geo engine
+// of its own, so the panel does the translation.
 //
-// geoip.dat is the same format 3x-ui/xray use, so any published .dat works
-// (Loyalsoldier for countries, runetfreedom for RU-blocked ranges, etc.),
-// downloaded online or mounted into the datasets directory as "<name>.dat".
+// Both formats are the same ones 3x-ui/xray use, so any published .dat works
+// (Loyalsoldier or runetfreedom for geoip, runetfreedom or v2fly for geosite),
+// downloaded online or mounted into the datasets directory. geoip files are
+// stored as "<name>.dat" and geosite files as "<name>.site.dat" so the two
+// kinds coexist in one directory.
 package geoip
 
 import (
@@ -26,14 +28,23 @@ import (
 	"time"
 )
 
-// Manager owns the datasets directory (*.dat files).
+// File suffixes distinguish the two dataset kinds in one directory. geosite
+// files carry ".site.dat" so a geoip scan skips them and vice versa.
+const (
+	geoipSuffix = ".dat"
+	siteSuffix  = ".site.dat"
+)
+
+// Manager owns the datasets directory (geoip *.dat and geosite *.site.dat).
 type Manager struct {
 	dir    string
 	client *http.Client
 
-	mu       sync.Mutex
-	cache    map[string][]string // category code -> CIDRs, merged across files
-	cacheKey string              // fingerprint of the loaded files
+	mu           sync.Mutex
+	cache        map[string][]string // geoip: category code -> CIDRs, merged
+	cacheKey     string              // fingerprint of loaded geoip files
+	siteCache    map[string][]string // geosite: category code -> domain suffixes
+	siteCacheKey string              // fingerprint of loaded geosite files
 }
 
 // New returns a Manager storing datasets under dir (created if missing).
@@ -93,28 +104,52 @@ type Dataset struct {
 	Bytes int64  `json:"bytes"`
 }
 
-// Category is a code present across the loaded datasets.
+// Category is a geoip code present across the loaded datasets.
 type Category struct {
 	Code  string `json:"code"`
 	CIDRs int    `json:"cidrs"`
 }
 
-// Datasets lists the .dat files present.
+// SiteCategory is a geosite code present across the loaded datasets.
+type SiteCategory struct {
+	Code    string `json:"code"`
+	Domains int    `json:"domains"`
+}
+
+// isSiteFile reports whether a directory entry is a geosite (.site.dat) file.
+func isSiteFile(name string) bool { return strings.HasSuffix(name, siteSuffix) }
+
+// isGeoipFile reports whether a directory entry is a geoip (.dat, not .site.dat)
+// file.
+func isGeoipFile(name string) bool {
+	return strings.HasSuffix(name, geoipSuffix) && !isSiteFile(name)
+}
+
+// Datasets lists the geoip .dat files present.
 func (m *Manager) Datasets() ([]Dataset, error) {
+	return m.datasets(isGeoipFile, geoipSuffix)
+}
+
+// SiteDatasets lists the geosite .site.dat files present.
+func (m *Manager) SiteDatasets() ([]Dataset, error) {
+	return m.datasets(isSiteFile, siteSuffix)
+}
+
+func (m *Manager) datasets(match func(string) bool, suffix string) ([]Dataset, error) {
 	entries, err := os.ReadDir(m.dir)
 	if err != nil {
 		return nil, err
 	}
 	var out []Dataset
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".dat") {
+		if e.IsDir() || !match(e.Name()) {
 			continue
 		}
 		info, err := e.Info()
 		if err != nil {
 			continue
 		}
-		out = append(out, Dataset{Name: strings.TrimSuffix(e.Name(), ".dat"), Bytes: info.Size()})
+		out = append(out, Dataset{Name: strings.TrimSuffix(e.Name(), suffix), Bytes: info.Size()})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
@@ -135,7 +170,8 @@ func (m *Manager) Categories() ([]Category, error) {
 	return out, nil
 }
 
-// CIDRs returns the CIDR list for a category code (merged across datasets).
+// CIDRs returns the CIDR list for a geoip category code (merged across
+// datasets).
 func (m *Manager) CIDRs(code string) ([]string, error) {
 	code = strings.ToLower(strings.TrimSpace(code))
 	m.mu.Lock()
@@ -150,9 +186,60 @@ func (m *Manager) CIDRs(code string) ([]string, error) {
 	return cidrs, nil
 }
 
+// SiteCategories lists every geosite category code with its domain count.
+func (m *Manager) SiteCategories() ([]SiteCategory, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.reloadSites(); err != nil {
+		return nil, err
+	}
+	out := make([]SiteCategory, 0, len(m.siteCache))
+	for code, domains := range m.siteCache {
+		out = append(out, SiteCategory{Code: code, Domains: len(domains)})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Code < out[j].Code })
+	return out, nil
+}
+
+// Domains returns the domain-suffix list for a geosite category code (merged
+// across datasets).
+func (m *Manager) Domains(code string) ([]string, error) {
+	code = strings.ToLower(strings.TrimSpace(code))
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.reloadSites(); err != nil {
+		return nil, err
+	}
+	domains, ok := m.siteCache[code]
+	if !ok {
+		return nil, fmt.Errorf("geosite category %q not found - add a dataset that provides it", code)
+	}
+	return domains, nil
+}
+
 // AddDataset downloads a geoip.dat from url and stores it as name.dat after
 // verifying it parses.
 func (m *Manager) AddDataset(ctx context.Context, name, rawURL string) error {
+	return m.addDataset(ctx, name, rawURL, geoipSuffix, func(b []byte) error {
+		if _, err := parseGeoIPDat(b); err != nil {
+			return fmt.Errorf("not a valid geoip.dat: %w", err)
+		}
+		return nil
+	})
+}
+
+// AddSiteDataset downloads a geosite.dat from url and stores it as
+// name.site.dat after verifying it parses.
+func (m *Manager) AddSiteDataset(ctx context.Context, name, rawURL string) error {
+	return m.addDataset(ctx, name, rawURL, siteSuffix, func(b []byte) error {
+		if _, err := parseGeoSiteDat(b); err != nil {
+			return fmt.Errorf("not a valid geosite.dat: %w", err)
+		}
+		return nil
+	})
+}
+
+func (m *Manager) addDataset(ctx context.Context, name, rawURL, suffix string, verify func([]byte) error) error {
 	name = sanitizeName(name)
 	if name == "" {
 		return fmt.Errorf("invalid dataset name")
@@ -183,25 +270,35 @@ func (m *Manager) AddDataset(ctx context.Context, name, rawURL string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := parseGeoIPDat(data); err != nil {
-		return fmt.Errorf("not a valid geoip.dat: %w", err)
+	if err := verify(data); err != nil {
+		return err
 	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	tmp := filepath.Join(m.dir, name+".dat.tmp")
+	tmp := filepath.Join(m.dir, name+suffix+".tmp")
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, filepath.Join(m.dir, name+".dat")); err != nil {
+	if err := os.Rename(tmp, filepath.Join(m.dir, name+suffix)); err != nil {
 		return err
 	}
-	m.cacheKey = "" // force reload
+	m.cacheKey = "" // force reload of both kinds
+	m.siteCacheKey = ""
 	return nil
 }
 
-// DeleteDataset removes a dataset file.
+// DeleteDataset removes a geoip dataset file.
 func (m *Manager) DeleteDataset(name string) error {
+	return m.deleteDataset(name, geoipSuffix)
+}
+
+// DeleteSiteDataset removes a geosite dataset file.
+func (m *Manager) DeleteSiteDataset(name string) error {
+	return m.deleteDataset(name, siteSuffix)
+}
+
+func (m *Manager) deleteDataset(name, suffix string) error {
 	name = sanitizeName(name)
 	if name == "" {
 		return fmt.Errorf("invalid dataset name")
@@ -209,37 +306,24 @@ func (m *Manager) DeleteDataset(name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.cacheKey = ""
-	err := os.Remove(filepath.Join(m.dir, name+".dat"))
+	m.siteCacheKey = ""
+	err := os.Remove(filepath.Join(m.dir, name+suffix))
 	if os.IsNotExist(err) {
 		return nil
 	}
 	return err
 }
 
-// reload re-parses the datasets if the set of files or their mtimes changed.
-// Caller must hold m.mu.
+// reload re-parses the geoip datasets if the set of files or their mtimes
+// changed. Caller must hold m.mu.
 func (m *Manager) reload() error {
-	entries, err := os.ReadDir(m.dir)
+	key, files, err := m.scan(isGeoipFile)
 	if err != nil {
 		return err
 	}
-	var key strings.Builder
-	var files []string
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".dat") {
-			continue
-		}
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		fmt.Fprintf(&key, "%s:%d:%d;", e.Name(), info.Size(), info.ModTime().UnixNano())
-		files = append(files, filepath.Join(m.dir, e.Name()))
-	}
-	if key.String() == m.cacheKey && m.cache != nil {
+	if key == m.cacheKey && m.cache != nil {
 		return nil
 	}
-
 	merged := map[string][]string{}
 	for _, f := range files {
 		data, err := os.ReadFile(f)
@@ -255,8 +339,60 @@ func (m *Manager) reload() error {
 		}
 	}
 	m.cache = merged
-	m.cacheKey = key.String()
+	m.cacheKey = key
 	return nil
+}
+
+// reloadSites re-parses the geosite datasets if they changed. Caller must hold
+// m.mu.
+func (m *Manager) reloadSites() error {
+	key, files, err := m.scan(isSiteFile)
+	if err != nil {
+		return err
+	}
+	if key == m.siteCacheKey && m.siteCache != nil {
+		return nil
+	}
+	merged := map[string][]string{}
+	for _, f := range files {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			return err
+		}
+		cats, err := parseGeoSiteDat(data)
+		if err != nil {
+			return fmt.Errorf("parse %s: %w", filepath.Base(f), err)
+		}
+		for code, domains := range cats {
+			merged[code] = append(merged[code], domains...)
+		}
+	}
+	m.siteCache = merged
+	m.siteCacheKey = key
+	return nil
+}
+
+// scan returns a fingerprint of the matching dataset files and their paths.
+// Caller must hold m.mu.
+func (m *Manager) scan(match func(string) bool) (string, []string, error) {
+	entries, err := os.ReadDir(m.dir)
+	if err != nil {
+		return "", nil, err
+	}
+	var key strings.Builder
+	var files []string
+	for _, e := range entries {
+		if e.IsDir() || !match(e.Name()) {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		fmt.Fprintf(&key, "%s:%d:%d;", e.Name(), info.Size(), info.ModTime().UnixNano())
+		files = append(files, filepath.Join(m.dir, e.Name()))
+	}
+	return key.String(), files, nil
 }
 
 func sanitizeName(name string) string {

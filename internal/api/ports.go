@@ -32,13 +32,20 @@ type MitaController interface {
 	Sessions(ctx context.Context) (*pb.SessionInfoList, error)
 }
 
-// GeoResolver manages GeoIP datasets and expands categories to CIDRs.
+// GeoResolver manages GeoIP/GeoSite datasets and expands categories to CIDRs
+// (geoip) or domain suffixes (geosite).
 type GeoResolver interface {
 	Datasets() ([]geoip.Dataset, error)
 	Categories() ([]geoip.Category, error)
 	CIDRs(code string) ([]string, error)
 	AddDataset(ctx context.Context, name, url string) error
 	DeleteDataset(name string) error
+
+	SiteDatasets() ([]geoip.Dataset, error)
+	SiteCategories() ([]geoip.SiteCategory, error)
+	Domains(code string) ([]string, error)
+	AddSiteDataset(ctx context.Context, name, url string) error
+	DeleteSiteDataset(name string) error
 }
 
 // ProcSupervisor is the subset of the process supervisor the panel exposes.

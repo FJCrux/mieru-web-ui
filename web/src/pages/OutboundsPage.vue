@@ -2,12 +2,13 @@
 import { h, ref, computed, onMounted } from 'vue'
 import {
   NCard, NButton, NSpace, NInput, NInputNumber, NSelect, NAlert, NTag, NText,
-  NDataTable, NDrawer, NDrawerContent, NForm, NFormItem, NDynamicInput, useMessage,
+  NDataTable, NDrawer, NDrawerContent, NForm, NFormItem, NDynamicInput,
+  NRadioGroup, NRadioButton, useMessage,
 } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { api, ApiError } from '../api/client'
-import type { EgressConfig, EgressProxy, EgressRule, GeoDataset, GeoCategory, GeoipState, Peer } from '../api/client'
+import type { EgressConfig, EgressProxy, EgressRule, GeoDataset, GeoCategory, GeoSiteCategory, GeoipState, Peer } from '../api/client'
 import HelpLabel from '../components/HelpLabel.vue'
 
 const message = useMessage()
@@ -24,30 +25,50 @@ const proxyOptions = computed(() => [
   ...peers.value.map((p) => ({ label: `${p.name} (peer)`, value: p.name })),
 ])
 
-// --- geoip datasets (xray geoip.dat format) ---
+// --- geoip / geosite datasets (xray geoip.dat / geosite.dat format) ---
 const datasets = ref<GeoDataset[]>([])
 const categories = ref<GeoCategory[]>([])
+const siteDatasets = ref<GeoDataset[]>([])
+const siteCategories = ref<GeoSiteCategory[]>([])
 const geoBusy = ref(false)
+const dsKind = ref<'geoip' | 'geosite'>('geoip')
 const dsName = ref('')
 const dsUrl = ref('')
-const presets = [
-  { name: 'geoip', url: 'https://github.com/Loyalsoldier/geoip/releases/latest/download/geoip.dat', label: 'Loyalsoldier (countries)' },
-  { name: 'ru-blocked', url: 'https://github.com/runetfreedom/russia-blocked-geoip/releases/latest/download/ru-blocked.dat', label: 'RU blocked (Roskomnadzor)' },
-]
-const catOptions = computed(() =>
-  categories.value.map((c) => ({ label: `${c.code} (${c.cidrs})`, value: c.code })),
-)
 
-function usePreset(p: { name: string; url: string }) {
+type Preset = { name: string; url: string; label: string; kind: 'geoip' | 'geosite' }
+const presets: Preset[] = [
+  // runetfreedom's combined dats carry many RU-relevant categories in one
+  // file, superseding the older single-category ru-blocked lists.
+  { name: 'runet', url: 'https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geoip.dat', label: 'RuNet Freedom', kind: 'geoip' },
+  { name: 'geoip', url: 'https://github.com/Loyalsoldier/geoip/releases/latest/download/geoip.dat', label: 'Loyalsoldier (countries)', kind: 'geoip' },
+  { name: 'runet', url: 'https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geosite.dat', label: 'RuNet Freedom', kind: 'geosite' },
+  { name: 'v2fly', url: 'https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat', label: 'v2fly (services)', kind: 'geosite' },
+]
+const shownPresets = computed(() => presets.filter((p) => p.kind === dsKind.value))
+
+// geoip categories expand to CIDRs, geosite to domains; both are offered as
+// rule match options, tagged so the two never get confused.
+const catOptions = computed(() => [
+  ...categories.value.map((c) => ({ label: `${c.code} · ${c.cidrs} IP`, value: `ip:${c.code}` })),
+  ...siteCategories.value.map((c) => ({ label: `${c.code} · ${c.domains} ${t('outbounds.domainsShort')}`, value: `site:${c.code}` })),
+])
+
+function usePreset(p: Preset) {
+  dsKind.value = p.kind
   dsName.value = p.name
   dsUrl.value = p.url
 }
 
+function applyGeoState(res: GeoipState) {
+  datasets.value = res.datasets
+  categories.value = res.categories
+  siteDatasets.value = res.siteDatasets ?? []
+  siteCategories.value = res.siteCategories ?? []
+}
+
 async function loadGeo() {
   try {
-    const res = await api.get<GeoipState>('/api/geoip')
-    datasets.value = res.datasets
-    categories.value = res.categories
+    applyGeoState(await api.get<GeoipState>('/api/geoip'))
   } catch {
     /* geoip is optional */
   }
@@ -59,9 +80,9 @@ async function addDataset() {
   }
   geoBusy.value = true
   try {
-    const res = await api.post<GeoipState>('/api/geoip/datasets', { name: dsName.value.trim(), url: dsUrl.value.trim() })
-    datasets.value = res.datasets
-    categories.value = res.categories
+    applyGeoState(await api.post<GeoipState>('/api/geoip/datasets', {
+      name: dsName.value.trim(), url: dsUrl.value.trim(), kind: dsKind.value,
+    }))
     dsName.value = ''
     dsUrl.value = ''
     message.success(t('outbounds.datasetAdded'))
@@ -71,11 +92,10 @@ async function addDataset() {
     geoBusy.value = false
   }
 }
-async function deleteDataset(name: string) {
+async function deleteDataset(name: string, kind: 'geoip' | 'geosite') {
   try {
-    const res = await api.del<GeoipState>(`/api/geoip/datasets/${encodeURIComponent(name)}`)
-    datasets.value = res.datasets
-    categories.value = res.categories
+    const q = kind === 'geosite' ? '?kind=geosite' : ''
+    applyGeoState(await api.del<GeoipState>(`/api/geoip/datasets/${encodeURIComponent(name)}${q}`))
   } catch (e) {
     message.error(e instanceof ApiError ? e.message : t('common.deleteFailed'))
   }
@@ -124,7 +144,17 @@ const proxyColumns = computed<DataTableColumns<EgressProxy>>(() => [
 ])
 
 function addRule() {
-  rules.value.push({ domains: [], cidrs: [], geo: [], action: 'PROXY', proxies: [] })
+  rules.value.push({ domains: [], cidrs: [], geo: [], sites: [], action: 'PROXY', proxies: [] })
+}
+
+// The rule editor offers geoip and geosite categories in one select, tagged
+// "ip:" / "site:"; on the wire they stay in separate geo/sites arrays.
+function ruleCats(rule: EgressRule): string[] {
+  return [...(rule.geo ?? []).map((c) => `ip:${c}`), ...(rule.sites ?? []).map((c) => `site:${c}`)]
+}
+function setRuleCats(rule: EgressRule, vals: string[]) {
+  rule.geo = vals.filter((v) => v.startsWith('ip:')).map((v) => v.slice(3))
+  rule.sites = vals.filter((v) => v.startsWith('site:')).map((v) => v.slice(5))
 }
 
 async function load() {
@@ -132,7 +162,7 @@ async function load() {
   try {
     const cfg = await api.get<EgressConfig>('/api/config/egress')
     proxies.value = cfg.proxies
-    rules.value = cfg.rules.map((r) => ({ ...r, geo: r.geo ?? [] }))
+    rules.value = cfg.rules.map((r) => ({ ...r, geo: r.geo ?? [], sites: r.sites ?? [] }))
   } catch (e) {
     message.error(e instanceof ApiError ? e.message : t('outbounds.loadFailed'))
   } finally {
@@ -182,23 +212,41 @@ onMounted(() => {
       <n-alert type="info" :show-icon="false" style="margin-bottom: 12px">
         {{ t('outbounds.geoAlert') }}
       </n-alert>
+      <n-radio-group v-model:value="dsKind" size="small" style="margin-bottom: 10px">
+        <n-radio-button value="geoip">{{ t('outbounds.kindGeoip') }}</n-radio-button>
+        <n-radio-button value="geosite">{{ t('outbounds.kindGeosite') }}</n-radio-button>
+      </n-radio-group>
+      <n-text depth="3" style="display: block; font-size: 12px; margin-bottom: 10px">
+        {{ dsKind === 'geoip' ? t('outbounds.kindGeoipHint') : t('outbounds.kindGeositeHint') }}
+      </n-text>
       <n-space style="margin-bottom: 10px">
-        <n-button v-for="p in presets" :key="p.name" size="small" tertiary @click="usePreset(p)">
+        <n-button v-for="p in shownPresets" :key="p.kind + p.name" size="small" tertiary @click="usePreset(p)">
           {{ p.label }}
         </n-button>
       </n-space>
       <n-space align="center" style="margin-bottom: 12px">
         <n-input v-model:value="dsName" :placeholder="t('outbounds.dsNamePlaceholder')" style="width: 130px" />
-        <n-input v-model:value="dsUrl" :placeholder="t('outbounds.dsUrlPlaceholder')" style="width: 420px" />
+        <n-input v-model:value="dsUrl" :placeholder="dsKind === 'geoip' ? 'geoip.dat URL' : 'geosite.dat URL'" style="width: 420px" />
         <n-button type="primary" :loading="geoBusy" @click="addDataset">{{ t('common.add') }}</n-button>
       </n-space>
-      <n-space>
-        <n-tag v-for="d in datasets" :key="d.name" closable @close="deleteDataset(d.name)">
-          {{ d.name }} · {{ fmtMB(d.bytes) }}
-        </n-tag>
-        <n-text v-if="!datasets.length" depth="3">{{ t('outbounds.noDatasets') }}</n-text>
+      <n-space vertical :size="8">
+        <n-space align="center" :size="6">
+          <span class="ds-lbl">{{ t('outbounds.kindGeoip') }}:</span>
+          <n-tag v-for="d in datasets" :key="d.name" closable type="warning" @close="deleteDataset(d.name, 'geoip')">
+            {{ d.name }} · {{ fmtMB(d.bytes) }}
+          </n-tag>
+          <n-text v-if="!datasets.length" depth="3" style="font-size: 12px">{{ t('outbounds.noDatasets') }}</n-text>
+          <n-text v-if="categories.length" depth="3" style="font-size: 12px">· {{ t('outbounds.categoriesAvailable', { n: categories.length }) }}</n-text>
+        </n-space>
+        <n-space align="center" :size="6">
+          <span class="ds-lbl">{{ t('outbounds.kindGeosite') }}:</span>
+          <n-tag v-for="d in siteDatasets" :key="d.name" closable type="info" @close="deleteDataset(d.name, 'geosite')">
+            {{ d.name }} · {{ fmtMB(d.bytes) }}
+          </n-tag>
+          <n-text v-if="!siteDatasets.length" depth="3" style="font-size: 12px">{{ t('outbounds.noDatasets') }}</n-text>
+          <n-text v-if="siteCategories.length" depth="3" style="font-size: 12px">· {{ t('outbounds.siteCategoriesAvailable', { n: siteCategories.length }) }}</n-text>
+        </n-space>
       </n-space>
-      <div v-if="categories.length" class="cats">{{ t('outbounds.categoriesAvailable', { n: categories.length }) }}</div>
     </n-card>
 
     <n-card :title="t('outbounds.rulesTitle')">
@@ -224,24 +272,36 @@ onMounted(() => {
               />
               <n-button size="tiny" quaternary type="error" @click="rules.splice(i, 1)">{{ t('common.remove') }}</n-button>
             </n-space>
-            <n-select
-              v-model:value="rule.geo"
-              multiple
-              filterable
-              :options="catOptions"
-              :placeholder="t('outbounds.matchGeo')"
-            />
-            <n-space>
-              <n-dynamic-input v-model:value="rule.domains" :min="0">
-                <template #default="{ value, index }">
-                  <n-input :value="value" @update:value="(v: string) => (rule.domains[index] = v)" :placeholder="t('outbounds.domainPlaceholder')" />
-                </template>
-              </n-dynamic-input>
-              <n-dynamic-input v-model:value="rule.cidrs" :min="0">
-                <template #default="{ value, index }">
-                  <n-input :value="value" @update:value="(v: string) => (rule.cidrs[index] = v)" :placeholder="t('outbounds.cidrPlaceholder')" />
-                </template>
-              </n-dynamic-input>
+            <div class="field">
+              <span class="field-lbl">{{ t('outbounds.matchCategories') }}</span>
+              <n-select
+                :value="ruleCats(rule)"
+                @update:value="(v: string[]) => setRuleCats(rule, v)"
+                multiple
+                filterable
+                :options="catOptions"
+                :placeholder="t('outbounds.matchGeoPlaceholder')"
+              />
+            </div>
+            <n-space :size="16">
+              <div class="field" style="flex: 1; min-width: 220px">
+                <span class="field-lbl">{{ t('outbounds.matchDomains') }}</span>
+                <n-dynamic-input v-model:value="rule.domains" :min="0">
+                  <template #create-button-default>{{ t('outbounds.addDomain') }}</template>
+                  <template #default="{ value, index }">
+                    <n-input :value="value" @update:value="(v: string) => (rule.domains[index] = v)" :placeholder="t('outbounds.domainPlaceholder')" />
+                  </template>
+                </n-dynamic-input>
+              </div>
+              <div class="field" style="flex: 1; min-width: 220px">
+                <span class="field-lbl">{{ t('outbounds.matchCidrs') }}</span>
+                <n-dynamic-input v-model:value="rule.cidrs" :min="0">
+                  <template #create-button-default>{{ t('outbounds.addCidr') }}</template>
+                  <template #default="{ value, index }">
+                    <n-input :value="value" @update:value="(v: string) => (rule.cidrs[index] = v)" :placeholder="t('outbounds.cidrPlaceholder')" />
+                  </template>
+                </n-dynamic-input>
+              </div>
             </n-space>
           </n-space>
         </n-card>
@@ -299,9 +359,16 @@ onMounted(() => {
   font-weight: 600;
   opacity: 0.6;
 }
-.cats {
-  margin-top: 10px;
+.ds-lbl {
   font-size: 12px;
-  opacity: 0.6;
+  font-weight: 600;
+  opacity: 0.55;
+  min-width: 64px;
+}
+.field-lbl {
+  display: block;
+  font-size: 12px;
+  opacity: 0.55;
+  margin-bottom: 4px;
 }
 </style>

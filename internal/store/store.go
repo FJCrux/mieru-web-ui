@@ -66,6 +66,18 @@ type Store interface {
 	// when the user is deleted or their password changes).
 	DeleteShareTokensForUser(username string) error
 
+	// UpsertSubToken creates or rotates the single permanent subscription
+	// token for t.Username (any previous token is invalidated atomically).
+	UpsertSubToken(token string, t SubTokenData) error
+	// SubToken resolves a subscription token, or ErrNotFound.
+	SubToken(token string) (SubTokenData, error)
+	// SubTokenForUser returns the user's subscription token, or ErrNotFound.
+	SubTokenForUser(username string) (SubTokenData, error)
+	// SubTokenUsernames lists usernames that have a subscription token.
+	SubTokenUsernames() (map[string]bool, error)
+	// DeleteSubTokenForUser revokes the user's subscription token.
+	DeleteSubTokenForUser(username string) error
+
 	// Backup writes a consistent snapshot of the store to dstPath (which must
 	// not already exist). Used by the panel's backup export.
 	Backup(dstPath string) error
@@ -79,6 +91,17 @@ type ShareTokenData struct {
 	Username     string
 	Host         string
 	Multiplexing string
+}
+
+// SubTokenData is what a permanent subscription token resolves to. The token
+// is stored in plaintext so the panel can re-display the subscription URL
+// (the same database already holds the users' plaintext passwords).
+type SubTokenData struct {
+	Token        string
+	Username     string
+	Host         string // "" = use the public_host setting at fetch time
+	Multiplexing string
+	CreatedAt    time.Time
 }
 
 // PeerRecord is a stored upstream chain peer.

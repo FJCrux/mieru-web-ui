@@ -99,7 +99,9 @@ import the `mieru://` / `mierus://` link or scan the QR. Recommended apps:
 - **iOS** — [Shadowrocket](https://apps.apple.com/app/id932747118), [Karing](https://karing.app/), or [ClashMi](https://clashmi.app/)
 - **Windows / macOS / Linux** — [Mihomo Party](https://mihomo.party/), [Clash Verge Rev](https://www.clashverge.dev/), or the official [mieru CLI](https://github.com/enfein/mieru/blob/main/docs/client-install.md)
 
-mieru maintains the [full, up-to-date client list](https://github.com/enfein/mieru#third-party-client-software). Apps that read a Clash/sing-box config can import the downloadable JSON from the Share dialog instead of the link.
+mieru maintains the [full, up-to-date client list](https://github.com/enfein/mieru#third-party-client-software).
+
+For Clash-family apps (Mihomo Party, Clash Verge Rev, FlClash, ClashMi — anything on mihomo ≥ 1.19.0), the **Subscription** tab in the Share dialog issues a permanent URL that serves a ready-to-import Clash profile and auto-refreshes in the client. The same URL with `?format=mierus` or `?format=mieru` returns the native links as a base64 line list for URI-subscription clients (NekoBox/Exclave with the mieru plugin), and `?flavor=proxies` returns a proxies-only document for `proxy-provider` setups.
 
 ## Configuration
 

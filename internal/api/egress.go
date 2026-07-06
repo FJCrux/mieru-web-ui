@@ -37,7 +37,10 @@ type egressRule struct {
 	// Geo are geoip category codes (e.g. "ru", "ru-blocked") expanded to
 	// CIDRs from the loaded datasets when pushed to mita. Kept separate so
 	// the UI shows "ru" instead of thousands of ranges.
-	Geo     []string `json:"geo"`
+	Geo []string `json:"geo"`
+	// Sites are geosite category codes (e.g. "telegram", "youtube") expanded
+	// to domain suffixes from the loaded datasets when pushed to mita.
+	Sites   []string `json:"sites"`
 	Action  string   `json:"action"` // PROXY, DIRECT, REJECT
 	Proxies []string `json:"proxies"`
 }
@@ -89,6 +92,7 @@ func (s *Server) handleGetEgress(w http.ResponseWriter, r *http.Request) {
 			Domains: orEmpty(rule.GetDomainNames()),
 			Cidrs:   orEmpty(rule.GetIpRanges()),
 			Geo:     []string{},
+			Sites:   []string{},
 			Action:  rule.GetAction().String(),
 			Proxies: orEmpty(rule.GetProxyNames()),
 		})
@@ -195,8 +199,9 @@ func (s *Server) buildEgress(in egressConfig) (*pb.Egress, error) {
 		}
 		cidrs := cleanList(rule.Cidrs)
 		geo := cleanList(rule.Geo)
-		if len(domains) == 0 && len(cidrs) == 0 && len(geo) == 0 {
-			return nil, fmt.Errorf("rule %d matches nothing (add a domain, CIDR, or geo category, or use \"*\")", i+1)
+		sites := cleanList(rule.Sites)
+		if len(domains) == 0 && len(cidrs) == 0 && len(geo) == 0 && len(sites) == 0 {
+			return nil, fmt.Errorf("rule %d matches nothing (add a domain, CIDR, geoip, or geosite category, or use \"*\")", i+1)
 		}
 		for _, c := range cidrs {
 			if c == "*" {
@@ -206,7 +211,7 @@ func (s *Server) buildEgress(in egressConfig) (*pb.Egress, error) {
 				return nil, fmt.Errorf("rule %d has an invalid CIDR %q", i+1, c)
 			}
 		}
-		// Expand each geo category into CIDRs from the datasets. mieru
+		// Expand each geoip category into CIDRs from the datasets. mieru
 		// matches on CIDRs; the panel does the geo lookup.
 		for _, code := range geo {
 			expanded, err := s.Geo.CIDRs(code)
@@ -214,6 +219,20 @@ func (s *Server) buildEgress(in egressConfig) (*pb.Egress, error) {
 				return nil, fmt.Errorf("rule %d: %v", i+1, err)
 			}
 			cidrs = append(cidrs, expanded...)
+		}
+		// Expand each geosite category into domain suffixes. Entries come from
+		// a large published list, so a single malformed domain is skipped
+		// rather than failing the whole rule.
+		for _, code := range sites {
+			expanded, err := s.Geo.Domains(code)
+			if err != nil {
+				return nil, fmt.Errorf("rule %d: %v", i+1, err)
+			}
+			for _, d := range expanded {
+				if nd, err := normalizeDomain(d); err == nil {
+					domains = append(domains, nd)
+				}
+			}
 		}
 		if pb.EgressAction(action) == pb.EgressAction_PROXY {
 			if len(rule.Proxies) == 0 {

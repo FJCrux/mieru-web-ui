@@ -36,7 +36,7 @@ type Paths struct {
 //	manifest.json          format/version + timestamp
 //	panel.db               consistent VACUUM INTO snapshot
 //	mita/server.conf.pb    mita daemon config
-//	geoip/<name>.dat       geoip datasets
+//	geoip/<name>.dat       geoip / geosite (.site.dat) datasets
 //	peers/...              chain peer state
 const Format = "imugi-panel-backup/1"
 

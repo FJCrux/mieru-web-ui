@@ -128,6 +128,56 @@ func TestShareTokens(t *testing.T) {
 	}
 }
 
+func TestSubTokens(t *testing.T) {
+	st := testStore(t)
+	data := SubTokenData{Token: "tok1", Username: "alice", Host: "", Multiplexing: ""}
+
+	if _, err := st.SubTokenForUser("alice"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("want ErrNotFound, got %v", err)
+	}
+	if err := st.UpsertSubToken("tok1", data); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.SubToken("tok1")
+	if err != nil || got.Username != "alice" || got.Token != "tok1" {
+		t.Fatalf("got %+v %v", got, err)
+	}
+	if got.CreatedAt.IsZero() {
+		t.Fatal("CreatedAt not set")
+	}
+	if _, err := st.SubToken("nope"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("want ErrNotFound, got %v", err)
+	}
+
+	// Rotation: a second upsert for the same user invalidates the old token.
+	if err := st.UpsertSubToken("tok2", SubTokenData{Username: "alice", Host: "1.2.3.4"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.SubToken("tok1"); !errors.Is(err, ErrNotFound) {
+		t.Fatal("old token should be gone after rotation")
+	}
+	got, err = st.SubTokenForUser("alice")
+	if err != nil || got.Token != "tok2" || got.Host != "1.2.3.4" {
+		t.Fatalf("got %+v %v", got, err)
+	}
+
+	names, err := st.SubTokenUsernames()
+	if err != nil || !names["alice"] || len(names) != 1 {
+		t.Fatalf("SubTokenUsernames: got %v %v", names, err)
+	}
+
+	if err := st.DeleteSubTokenForUser("alice"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.SubToken("tok2"); !errors.Is(err, ErrNotFound) {
+		t.Fatal("token should be gone after revocation")
+	}
+	names, err = st.SubTokenUsernames()
+	if err != nil || len(names) != 0 {
+		t.Fatalf("SubTokenUsernames after delete: got %v %v", names, err)
+	}
+}
+
 func TestSettings(t *testing.T) {
 	st := testStore(t)
 	v, err := st.Setting("public_host")

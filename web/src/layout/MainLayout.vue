@@ -62,6 +62,11 @@ const userMenu = computed(() => [
   { label: t('layout.logout'), key: 'logout', icon: icon(LogOutOutline) },
 ])
 
+// The version labels double as source links: mita → mieru repo, panel → this
+// panel's repo.
+const MIERU_REPO = 'https://github.com/enfein/mieru'
+const PANEL_REPO = 'https://github.com/FJCrux/Imugi-Panel'
+
 const localeMenu = LOCALES.map((l) => ({ label: l.label, key: l.code }))
 
 async function poll() {
@@ -135,10 +140,10 @@ async function onUser(key: string) {
             <template #icon><n-icon :component="MenuOutline" /></template>
           </n-button>
           <n-tag :type="statusType" size="small" round>{{ status || '…' }}</n-tag>
-          <n-text v-if="version && !isMobile" depth="3" style="font-size: 12px">mita v{{ version }}</n-text>
-          <n-text v-if="panel && !isMobile" depth="3" style="font-size: 12px">
+          <a v-if="version && !isMobile" :href="MIERU_REPO" target="_blank" rel="noopener noreferrer" class="ver-link" :title="t('layout.ghMieru')">mita v{{ version }}</a>
+          <a v-if="panel && !isMobile" :href="PANEL_REPO" target="_blank" rel="noopener noreferrer" class="ver-link" :title="t('layout.ghPanel')">
             · panel {{ panel.current === 'dev' ? 'dev' : panel.current }}
-          </n-text>
+          </a>
           <a
             v-if="panel?.updateAvailable"
             :href="panel.releaseUrl"
@@ -185,14 +190,23 @@ async function onUser(key: string) {
 </template>
 
 <style scoped>
-/* Sidebar: deep jade gradient with a faint scale texture, so it reads as the
-   serpent's flank rather than a flat panel. */
+/* Sidebar: deep jade gradient over staggered snake scales. Each tile is a
+   distinct rounded scale — a faint domed fill with a brighter lower rim where
+   the light catches the overlapping edge — and alternate rows are offset by
+   half a tile (a brick/checkerboard stagger), so it reads as the serpent's
+   flank rather than a flat panel. Two identical layers, one shifted, make the
+   rows interlock. */
+/* Staggered overlapping scutes ("fish-scale"): each tile is one filled scale
+   (a domed shield) and a second layer of the same tile, offset by half, nests
+   into the gaps — so the flank reads as rows of distinct overlapping scales
+   rather than a flat panel or wavy stripes. */
 .sider {
+  --scale: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='26'%20height='16'%3E%3Cpath%20d='M2%2016%20C2%204%2024%204%2024%2016%20Z'%20fill='%231ed898'%20fill-opacity='0.045'%20stroke='%231ed898'%20stroke-opacity='0.17'/%3E%3C/svg%3E");
   background:
     linear-gradient(180deg, rgba(18, 40, 32, 0.55), rgba(9, 17, 14, 0.2)),
-    radial-gradient(14px 14px at 7px 7px, rgba(18, 201, 140, 0.05) 40%, transparent 42%),
+    var(--scale) 0 0 / 26px 16px,
+    var(--scale) 13px 8px / 26px 16px,
     #0b1512;
-  background-size: auto, 14px 14px, auto;
 }
 .brand {
   height: 60px;
@@ -217,6 +231,17 @@ async function onUser(key: string) {
 .update-link {
   display: inline-flex;
   text-decoration: none;
+}
+/* Version labels act as source links: muted like the old text, brightening on
+   hover so they read as clickable. */
+.ver-link {
+  font-size: 12px;
+  color: var(--n-text-color-disabled, #7a7a82);
+  text-decoration: none;
+  transition: color 0.15s;
+}
+.ver-link:hover {
+  color: #63e2b7;
 }
 .header {
   height: 56px;

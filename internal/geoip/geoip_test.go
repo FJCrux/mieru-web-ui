@@ -47,6 +47,97 @@ func buildDat(t *testing.T, cats map[string][]string) []byte {
 	return out
 }
 
+// buildSiteDat encodes a minimal geosite.dat with the given category ->
+// []domain{value, type}. type: 2=Domain(suffix), 3=Full, 0=Plain, 1=Regex.
+func buildSiteDat(t *testing.T, cats map[string][]struct {
+	Value string
+	Type  uint64
+}) []byte {
+	t.Helper()
+	var out []byte
+	for code, domains := range cats {
+		var site []byte
+		site = protowire.AppendTag(site, 1, protowire.BytesType)
+		site = protowire.AppendBytes(site, []byte(code))
+		for _, d := range domains {
+			var dom []byte
+			dom = protowire.AppendTag(dom, 1, protowire.VarintType)
+			dom = protowire.AppendVarint(dom, d.Type)
+			dom = protowire.AppendTag(dom, 2, protowire.BytesType)
+			dom = protowire.AppendBytes(dom, []byte(d.Value))
+			site = protowire.AppendTag(site, 2, protowire.BytesType)
+			site = protowire.AppendBytes(site, dom)
+		}
+		out = protowire.AppendTag(out, 1, protowire.BytesType)
+		out = protowire.AppendBytes(out, site)
+	}
+	return out
+}
+
+func TestParseGeoSite(t *testing.T) {
+	dir := t.TempDir()
+	type dom = struct {
+		Value string
+		Type  uint64
+	}
+	dat := buildSiteDat(t, map[string][]dom{
+		"telegram": {{"t.me", 2}, {"telegram.org", 2}, {"exact.telegram.org", 3}},
+		"ads":      {{"keyword", 0}, {"re.*gex", 1}}, // both unsupported -> dropped
+	})
+	if err := os.WriteFile(filepath.Join(dir, "sites.site.dat"), dat, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tg, err := m.Domains("telegram")
+	if err != nil || len(tg) != 3 {
+		t.Fatalf("telegram domains: %v %v", tg, err)
+	}
+	// Plain/Regex-only category yields no usable domains.
+	if _, err := m.Domains("ads"); err == nil {
+		t.Fatal("expected ads (plain/regex only) to have no domains")
+	}
+
+	// Geosite files must not appear as geoip datasets, and vice versa.
+	if ds, _ := m.Datasets(); len(ds) != 0 {
+		t.Fatalf("geosite file leaked into geoip datasets: %+v", ds)
+	}
+	sds, err := m.SiteDatasets()
+	if err != nil || len(sds) != 1 || sds[0].Name != "sites" {
+		t.Fatalf("site datasets: %v %+v", err, sds)
+	}
+	sc, err := m.SiteCategories()
+	if err != nil || len(sc) != 1 || sc[0].Code != "telegram" || sc[0].Domains != 3 {
+		t.Fatalf("site categories: %v %+v", err, sc)
+	}
+}
+
+func TestGeoipAndGeositeCoexist(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "ip.dat"), buildDat(t, map[string][]string{"ru": {"2.56.0.0/16"}}), 0o644)
+	os.WriteFile(filepath.Join(dir, "site.site.dat"), buildSiteDat(t, map[string][]struct {
+		Value string
+		Type  uint64
+	}{"youtube": {{"youtube.com", 2}}}), 0o644)
+	m, _ := New(dir)
+
+	if ds, _ := m.Datasets(); len(ds) != 1 || ds[0].Name != "ip" {
+		t.Fatalf("geoip datasets: %+v", ds)
+	}
+	if sds, _ := m.SiteDatasets(); len(sds) != 1 || sds[0].Name != "site" {
+		t.Fatalf("site datasets: %+v", sds)
+	}
+	if _, err := m.CIDRs("ru"); err != nil {
+		t.Fatalf("geoip lookup failed: %v", err)
+	}
+	if _, err := m.Domains("youtube"); err != nil {
+		t.Fatalf("geosite lookup failed: %v", err)
+	}
+}
+
 func TestParseAndExpand(t *testing.T) {
 	dir := t.TempDir()
 	dat := buildDat(t, map[string][]string{

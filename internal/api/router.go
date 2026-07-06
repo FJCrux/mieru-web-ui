@@ -27,11 +27,18 @@ type Server struct {
 	// SharePath is the public URL prefix for share links (e.g. "/s"),
 	// decoupled from the admin base path so links don't reveal it.
 	SharePath string
-	// ActiveBasePath / ActiveSharePath are the path settings the running
-	// process started with; comparing them to the stored settings tells us a
-	// restart is pending.
+	// SubPath is the public URL prefix for subscription links (e.g. "/sub").
+	SubPath string
+	// SubPort is the dedicated subscription listener port ("" = the panel
+	// port); subscription URLs are built with it.
+	SubPort string
+	// ActiveBasePath / ActiveSharePath / ActiveSubPath / ActiveSubPort are
+	// the path settings the running process started with; comparing them to
+	// the stored settings tells us a restart is pending.
 	ActiveBasePath  string
 	ActiveSharePath string
+	ActiveSubPath   string
+	ActiveSubPort   string
 	// PortsManaged is true when port bindings are enforced from PROXY_PORTS;
 	// the Network UI then shows them read-only.
 	PortsManaged bool
@@ -73,6 +80,9 @@ func (s *Server) Routes() http.Handler {
 	authed.HandleFunc("DELETE /api/users/{name}", s.handleDeleteUser)
 	authed.HandleFunc("GET /api/users/{name}/share", s.handleShare)
 	authed.HandleFunc("POST /api/users/{name}/share-token", s.handleCreateShareToken)
+	authed.HandleFunc("GET /api/users/{name}/subscription", s.handleGetSubscription)
+	authed.HandleFunc("POST /api/users/{name}/subscription", s.handleCreateSubscription)
+	authed.HandleFunc("DELETE /api/users/{name}/subscription", s.handleDeleteSubscription)
 
 	authed.HandleFunc("GET /api/config/network", s.handleGetNetwork)
 	authed.HandleFunc("PUT /api/config/network", s.handlePutNetwork)

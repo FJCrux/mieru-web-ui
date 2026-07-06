@@ -87,6 +87,13 @@ CREATE TABLE IF NOT EXISTS share_tokens (
     multiplexing TEXT NOT NULL,
     expires_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS sub_tokens (
+    token TEXT PRIMARY KEY,
+    mieru_username TEXT NOT NULL UNIQUE,
+    host TEXT NOT NULL,
+    multiplexing TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS peers (
     name TEXT PRIMARY KEY,
     config_json TEXT NOT NULL,
@@ -273,5 +280,68 @@ func (s *sqliteStore) ShareToken(tokenHash string) (ShareTokenData, error) {
 
 func (s *sqliteStore) DeleteShareTokensForUser(username string) error {
 	_, err := s.db.Exec(`DELETE FROM share_tokens WHERE mieru_username = ?`, username)
+	return err
+}
+
+// --- subscription tokens ---
+
+func (s *sqliteStore) UpsertSubToken(token string, t SubTokenData) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM sub_tokens WHERE mieru_username = ?`, t.Username); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`
+INSERT INTO sub_tokens (token, mieru_username, host, multiplexing, created_at)
+VALUES (?, ?, ?, ?, ?)`,
+		token, t.Username, t.Host, t.Multiplexing, time.Now().Unix()); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *sqliteStore) SubToken(token string) (SubTokenData, error) {
+	return s.subTokenBy(`token = ?`, token)
+}
+
+func (s *sqliteStore) SubTokenForUser(username string) (SubTokenData, error) {
+	return s.subTokenBy(`mieru_username = ?`, username)
+}
+
+func (s *sqliteStore) subTokenBy(where string, arg any) (SubTokenData, error) {
+	var t SubTokenData
+	var createdAt int64
+	err := s.db.QueryRow(`SELECT token, mieru_username, host, multiplexing, created_at FROM sub_tokens WHERE `+where, arg).
+		Scan(&t.Token, &t.Username, &t.Host, &t.Multiplexing, &createdAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return SubTokenData{}, ErrNotFound
+	}
+	t.CreatedAt = time.Unix(createdAt, 0)
+	return t, err
+}
+
+// SubTokenUsernames lists usernames that have a subscription token.
+func (s *sqliteStore) SubTokenUsernames() (map[string]bool, error) {
+	rows, err := s.db.Query(`SELECT mieru_username FROM sub_tokens`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	names := make(map[string]bool)
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		names[n] = true
+	}
+	return names, rows.Err()
+}
+
+func (s *sqliteStore) DeleteSubTokenForUser(username string) error {
+	_, err := s.db.Exec(`DELETE FROM sub_tokens WHERE mieru_username = ?`, username)
 	return err
 }

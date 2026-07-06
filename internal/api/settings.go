@@ -5,6 +5,7 @@ package api
 import (
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -16,9 +17,14 @@ type settingsResponse struct {
 	// used as the base for share links and to validate the Host header.
 	PanelURL string `json:"panelUrl"`
 	// BasePath is the secret admin prefix; SharePath is the public share
-	// prefix. Both take effect after a restart.
+	// prefix; SubPath is the public subscription prefix. All take effect
+	// after a restart.
 	BasePath  string `json:"basePath"`
 	SharePath string `json:"sharePath"`
+	SubPath   string `json:"subPath"`
+	// SubPort is the dedicated subscription listener port; empty serves
+	// subscriptions on the panel port. Takes effect after a restart.
+	SubPort string `json:"subPort"`
 	// RestartPending is true when a saved path differs from the running one.
 	RestartPending bool `json:"restartPending"`
 }
@@ -33,7 +39,14 @@ func (s *Server) restartPending() bool {
 	if share == "" {
 		share = "/s"
 	}
-	return base != s.ActiveBasePath || share != s.ActiveSharePath
+	storedSub, _ := s.Store.Setting("sub_path")
+	sub, _ := cleanURLPath(storedSub)
+	if sub == "" {
+		sub = "/sub"
+	}
+	storedSubPort, _ := s.Store.Setting("sub_port")
+	return base != s.ActiveBasePath || share != s.ActiveSharePath ||
+		sub != s.ActiveSubPath || storedSubPort != s.ActiveSubPort
 }
 
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
@@ -45,8 +58,11 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	panelURL, _ := s.Store.Setting("panel_url")
 	basePath, _ := s.Store.Setting("base_path")
 	sharePath, _ := s.Store.Setting("share_path")
+	subPath, _ := s.Store.Setting("sub_path")
+	subPort, _ := s.Store.Setting("sub_port")
 	writeJSON(w, http.StatusOK, settingsResponse{
 		PublicHost: host, PanelURL: panelURL, BasePath: basePath, SharePath: sharePath,
+		SubPath: subPath, SubPort: subPort,
 		RestartPending: s.restartPending(),
 	})
 }
@@ -78,10 +94,32 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "share path must differ from the base path")
 		return
 	}
+	sub, ok := cleanURLPath(req.SubPath)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "subscription path must look like /something")
+		return
+	}
+	if sub != "" && (sub == base || sub == share) {
+		writeErr(w, http.StatusBadRequest, "subscription path must differ from the base and share paths")
+		return
+	}
+	subPort := strings.TrimSpace(req.SubPort)
+	if subPort != "" {
+		n, err := strconv.Atoi(subPort)
+		if err != nil || n < 1 || n > 65535 {
+			writeErr(w, http.StatusBadRequest, "subscription port must be 1-65535 or empty")
+			return
+		}
+		if subPort == s.PanelPort {
+			writeErr(w, http.StatusBadRequest, "subscription port must differ from the panel port")
+			return
+		}
+	}
 
 	for k, v := range map[string]string{
 		"public_host": req.PublicHost, "panel_url": req.PanelURL,
 		"base_path": base, "share_path": share,
+		"sub_path": sub, "sub_port": subPort,
 	} {
 		if err := s.Store.SetSetting(k, v); err != nil {
 			writeErr(w, http.StatusInternalServerError, err.Error())

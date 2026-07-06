@@ -47,6 +47,8 @@ type userInfo struct {
 	Quotas         []Quota `json:"quotas"`
 	AllowPrivateIP bool    `json:"allowPrivateIP"`
 	HasSecret      bool    `json:"hasSecret"`
+	// HasSubscription is true when a permanent subscription link is issued.
+	HasSubscription bool `json:"hasSubscription"`
 	// Traffic metrics from GetUsers; zero when the user has no traffic.
 	Metrics map[string]int64 `json:"metrics"`
 	// LastActiveUnixMs is when the user last transferred data (0 = never),
@@ -70,15 +72,21 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	subs, err := s.Store.SubTokenUsernames()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	out := []userInfo{}
 	for _, item := range users.GetItems() {
 		u := item.GetUser()
 		info := userInfo{
-			Name:           u.GetName(),
-			Quotas:         []Quota{},
-			AllowPrivateIP: u.GetAllowPrivateIP(),
-			HasSecret:      secrets[u.GetName()],
-			Metrics:        map[string]int64{},
+			Name:            u.GetName(),
+			Quotas:          []Quota{},
+			AllowPrivateIP:  u.GetAllowPrivateIP(),
+			HasSecret:       secrets[u.GetName()],
+			HasSubscription: subs[u.GetName()],
+			Metrics:         map[string]int64{},
 		}
 		for _, q := range u.GetQuotas() {
 			info.Quotas = append(info.Quotas, Quota{Days: q.GetDays(), Megabytes: q.GetMegabytes()})
@@ -175,6 +183,8 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Old share links carried the previous password; invalidate them.
+		// Subscription tokens survive: they resolve the current password at
+		// fetch time, so clients pick up the change on their next refresh.
 		_ = s.Store.DeleteShareTokensForUser(name)
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -200,6 +210,7 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.Store.DeleteUserSecret(name)
 	_ = s.Store.DeleteShareTokensForUser(name)
+	_ = s.Store.DeleteSubTokenForUser(name)
 	// Stop proxying if that was the last user, to avoid a mita crashloop.
 	s.reconcileProxy(r.Context(), false)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})

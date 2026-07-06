@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"time"
 
+	pb "github.com/enfein/mieru/v3/pkg/appctl/appctlpb"
 	"github.com/fjcrux/mieru-web-ui/internal/sharelink"
 	"github.com/fjcrux/mieru-web-ui/internal/store"
 )
@@ -18,27 +19,39 @@ import (
 // maxShareTTL caps how long a generated link can live.
 const maxShareTTL = 7 * 24 * time.Hour
 
-// buildLinks resolves a user's client config and share links. host falls back
-// to the public_host setting when empty. The int is an HTTP status to use on
-// error (0 on success).
-func (s *Server) buildLinks(ctx context.Context, name, host, multiplexing string) (*sharelink.Links, int, error) {
-	password, err := s.Store.UserSecret(name)
+// resolveUserParams fetches everything a link or subscription builder needs:
+// the user's plaintext password, the public host (falling back to the
+// public_host setting when host is empty), and the live server config. The
+// int is an HTTP status to use on error (0 on success).
+func (s *Server) resolveUserParams(ctx context.Context, name, host string) (password, resolvedHost string, cfg *pb.ServerConfig, status int, err error) {
+	password, err = s.Store.UserSecret(name)
 	if errors.Is(err, store.ErrNotFound) {
-		return nil, http.StatusConflict, errors.New("no stored password for this user (created outside the panel) - reset the password to enable sharing")
+		return "", "", nil, http.StatusConflict, errors.New("no stored password for this user (created outside the panel) - reset the password to enable sharing")
 	} else if err != nil {
-		return nil, http.StatusInternalServerError, err
+		return "", "", nil, http.StatusInternalServerError, err
 	}
 
 	if host == "" {
 		host, err = s.Store.Setting("public_host")
 		if err != nil || host == "" {
-			return nil, http.StatusConflict, errors.New("public host is not configured - set it in Settings")
+			return "", "", nil, http.StatusConflict, errors.New("public host is not configured - set it in Settings")
 		}
 	}
 
-	cfg, err := s.Mita.GetConfig(ctx)
+	cfg, err = s.Mita.GetConfig(ctx)
 	if err != nil {
-		return nil, http.StatusBadGateway, err
+		return "", "", nil, http.StatusBadGateway, err
+	}
+	return password, host, cfg, 0, nil
+}
+
+// buildLinks resolves a user's client config and share links. host falls back
+// to the public_host setting when empty. The int is an HTTP status to use on
+// error (0 on success).
+func (s *Server) buildLinks(ctx context.Context, name, host, multiplexing string) (*sharelink.Links, int, error) {
+	password, host, cfg, status, err := s.resolveUserParams(ctx, name, host)
+	if err != nil {
+		return nil, status, err
 	}
 
 	links, err := sharelink.Build(sharelink.Params{

@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -80,6 +81,16 @@ func (fakeGeo) CIDRs(code string) ([]string, error) {
 }
 func (fakeGeo) AddDataset(context.Context, string, string) error { return nil }
 func (fakeGeo) DeleteDataset(string) error                       { return nil }
+func (fakeGeo) SiteDatasets() ([]geoip.Dataset, error)           { return nil, nil }
+func (fakeGeo) SiteCategories() ([]geoip.SiteCategory, error)    { return nil, nil }
+func (fakeGeo) Domains(code string) ([]string, error) {
+	if code == "telegram" {
+		return []string{"t.me", "telegram.org"}, nil
+	}
+	return nil, fmt.Errorf("geosite category %q not found", code)
+}
+func (fakeGeo) AddSiteDataset(context.Context, string, string) error { return nil }
+func (fakeGeo) DeleteSiteDataset(string) error                       { return nil }
 
 type fakePeers struct {
 	names map[string]bool
@@ -337,6 +348,39 @@ func TestEgressDomainNormalization(t *testing.T) {
 	})
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid domain: want 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// A geosite category on a rule expands to domain suffixes, and a geoip
+// category to CIDRs, in the same rule.
+func TestEgressGeoExpansion(t *testing.T) {
+	env := newTestEnv(t)
+
+	rec := env.do(t, "PUT", "/api/config/egress", egressConfig{
+		Rules: []egressRule{
+			{Sites: []string{"telegram"}, Geo: []string{"ru"}, Action: "DIRECT"},
+		},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("put egress: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	rules := env.mita.cfg.GetEgress().GetRules()
+	if len(rules) != 1 {
+		t.Fatalf("want 1 rule, got %d", len(rules))
+	}
+	if got := rules[0].GetDomainNames(); len(got) != 2 || got[0] != "t.me" {
+		t.Fatalf("geosite domains: got %v", got)
+	}
+	if got := rules[0].GetIpRanges(); len(got) != 1 || got[0] != "5.8.0.0/19" {
+		t.Fatalf("geoip cidrs: got %v", got)
+	}
+
+	// An unknown geosite category is rejected.
+	rec = env.do(t, "PUT", "/api/config/egress", egressConfig{
+		Rules: []egressRule{{Sites: []string{"nope"}, Action: "DIRECT"}},
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("unknown geosite: want 400, got %d", rec.Code)
 	}
 }
 

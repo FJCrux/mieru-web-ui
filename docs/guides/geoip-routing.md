@@ -7,19 +7,35 @@ DIRECT, or REJECT.
 
 All of this is optional - with no rules, mita connects directly.
 
-## GeoIP datasets
+## GeoIP and GeoSite datasets
 
-GeoIP uses the same `geoip.dat` format as xray/3x-ui. Add a dataset by URL on
-the Outbounds page (presets for Loyalsoldier countries and the RU-blocked list
-are built in), or mount your own:
+The panel reads two xray-format dataset kinds, both selectable on the Outbounds
+page (or mounted into the datasets dir yourself):
+
+- **GeoIP** (`geoip.dat`) - lists of **IP ranges**. A category expands to CIDRs.
+- **GeoSite** (`geosite.dat`) - lists of **domains**. A category expands to
+  domain suffixes matched by mita. Regex and keyword entries are skipped
+  (mita matches domains exactly or by dot-separated suffix only).
 
 ```yaml
 # docker-compose.yml, under the service:
 volumes:
-  - ./geoip:/data/geoip     # drop any geoip.dat files here
+  - ./geoip:/data/geoip     # geoip.dat and geosite.dat files
 ```
 
-Then reference a category (e.g. `ru`, `cn`, `ru-blocked`) in a rule.
+Mounted files are named `<name>.dat` for GeoIP and `<name>.site.dat` for
+GeoSite. Built-in presets:
+
+- **RuNet Freedom** ([russia-v2ray-rules-dat](https://github.com/runetfreedom/russia-v2ray-rules-dat)) -
+  both a GeoIP and a GeoSite dataset. RU-focused categories in one file: `ru`,
+  `ru-blocked`, `ru-blocked-community`, plus per-service entries (`telegram`,
+  `youtube`, `discord`, `cloudflare`, ...).
+- **Loyalsoldier** - per-country GeoIP codes (`ru`, `cn`, `us`, ...).
+- **v2fly** - the community GeoSite list (`telegram`, `google`, `netflix`, ...).
+
+In a rule, pick categories from the combined list (IP categories are tagged
+`ip:`, domain categories `site:`); the panel expands GeoIP to CIDRs and GeoSite
+to domains. Categories from all added datasets of the same kind are merged.
 
 Large categories expand to many CIDRs (RU-blocked is ~90k), which enlarges the
 server config. The panel keeps the category name in the UI and expands it only

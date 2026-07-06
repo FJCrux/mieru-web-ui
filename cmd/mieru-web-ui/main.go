@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -201,6 +202,8 @@ func main() {
 	seedSetting(st, "panel_url", strings.TrimRight(os.Getenv("PANEL_URL"), "/"))
 	seedSetting(st, "base_path", os.Getenv("PANEL_BASE_PATH"))
 	seedSetting(st, "share_path", os.Getenv("SHARE_PATH"))
+	seedSetting(st, "sub_path", os.Getenv("SUB_PATH"))
+	seedSetting(st, "sub_port", os.Getenv("SUB_PORT"))
 
 	// Desired ports live in the panel store and are applied to mita only when a
 	// user exists (mita crashloops with ports but no users). PROXY_PORTS, when
@@ -265,10 +268,51 @@ func main() {
 	if sharePath == "" {
 		sharePath = "/s"
 	}
+	subPath := normalizePath(settingOr(st, "sub_path", "/sub"))
+	if subPath == "" {
+		subPath = "/sub"
+	}
+	// The settings API rejects colliding paths, but an env seed on first run
+	// could still produce one, which would panic mux registration.
+	if subPath == sharePath || subPath == basePath {
+		fallback := "/sub"
+		if fallback == sharePath || fallback == basePath {
+			fallback = "/clashsub"
+		}
+		log.Printf("sub path %q collides with another path, using %s", subPath, fallback)
+		subPath = fallback
+	}
+
+	// A dedicated subscription port gets its own listener serving only
+	// subscription routes. Subscriptions embed user passwords, so the
+	// dedicated listener requires TLS: its own SUB_TLS_CERT/KEY, else the
+	// panel's certs, else refuse to start (SUB_INSECURE_HTTP=1 overrides for
+	// setups where a TLS-terminating reverse proxy fronts the port).
+	subPort := strings.TrimSpace(settingOr(st, "sub_port", ""))
+	if subPort != "" {
+		if n, err := strconv.Atoi(subPort); err != nil || n < 1 || n > 65535 || subPort == panelPort {
+			log.Printf("invalid sub port %q, serving subscriptions on the panel port", subPort)
+			subPort = ""
+		}
+	}
+	subTLSCert := envOr("SUB_TLS_CERT", tlsCert)
+	subTLSKey := envOr("SUB_TLS_KEY", tlsKey)
+	if subPort != "" && subTLSCert == "" {
+		if boolEnv("SUB_INSECURE_HTTP") {
+			log.Print("WARNING: subscription port serves plain HTTP (SUB_INSECURE_HTTP=1); subscriptions contain user passwords - make sure a TLS-terminating proxy fronts this port")
+		} else {
+			log.Fatal("SUB_PORT is set but no TLS is configured: subscriptions contain user passwords and must not travel over plain HTTP. Set SUB_TLS_CERT/SUB_TLS_KEY (or PANEL_TLS_CERT/PANEL_TLS_KEY), or set SUB_INSECURE_HTTP=1 if a TLS-terminating reverse proxy fronts this port.")
+		}
+	}
+
 	// Show the effective paths on startup, in case a secret base path was set
 	// and forgotten.
 	adminPath := basePath + "/"
-	log.Printf("paths: admin=%s  share=%s/<token>", adminPath, sharePath)
+	subAt := subPath
+	if subPort != "" {
+		subAt = ":" + subPort + subPath
+	}
+	log.Printf("paths: admin=%s  share=%s/<token>  sub=%s/<token>", adminPath, sharePath, subAt)
 	if pu := settingOr(st, "panel_url", ""); pu != "" {
 		log.Printf("panel URL: %s%s", pu, basePath)
 	}
@@ -280,6 +324,10 @@ func main() {
 		Backup: &statePaths}
 	srv.ActiveBasePath = basePath
 	srv.ActiveSharePath = sharePath
+	srv.SubPath = subPath
+	srv.SubPort = subPort
+	srv.ActiveSubPath = subPath
+	srv.ActiveSubPort = subPort
 	// Restart = graceful shutdown; a Docker restart policy brings the panel
 	// back with the new config. Cancelling ctx runs the shutdown path below.
 	srv.Restart = stop
@@ -307,6 +355,11 @@ func main() {
 	// Public share pages live under their own prefix, not under basePath, so a
 	// shared link never reveals the admin path.
 	root.HandleFunc("GET "+sharePath+"/{token}", srv.HandlePublicSharePage)
+	// Subscriptions live on the panel port unless a dedicated port is set, in
+	// which case they get their own listener below and stay off this mux.
+	if subPort == "" {
+		root.HandleFunc("GET "+subPath+"/{token}", srv.HandlePublicSubscription)
+	}
 	if basePath == "" {
 		root.Handle("/", adminMux)
 	} else {
@@ -349,6 +402,44 @@ func main() {
 		Addr:              panelBind + ":" + panelPort,
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	// Dedicated subscription listener: same middleware stack, but the mux
+	// carries only the public subscription route.
+	if subPort != "" {
+		subMux := http.NewServeMux()
+		subMux.HandleFunc("GET "+subPath+"/{token}", srv.HandlePublicSubscription)
+		var subHandler http.Handler = harden(noindex(srv.HostGuard(subMux)))
+		if reqMiddleware != nil {
+			subHandler = reqMiddleware(subHandler)
+		}
+		subServer := &http.Server{
+			Addr:              panelBind + ":" + subPort,
+			Handler:           subHandler,
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		go func() {
+			<-ctx.Done()
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = subServer.Shutdown(shutdownCtx)
+		}()
+		go func() {
+			subScheme := "http"
+			if subTLSCert != "" {
+				subScheme = "https"
+			}
+			log.Printf("subscriptions listening on %s://%s", subScheme, subServer.Addr)
+			var err error
+			if subTLSCert != "" {
+				err = subServer.ListenAndServeTLS(subTLSCert, subTLSKey)
+			} else {
+				err = subServer.ListenAndServe()
+			}
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Fatalf("subscription server: %v", err)
+			}
+		}()
 	}
 
 	go func() {

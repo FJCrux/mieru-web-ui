@@ -111,11 +111,18 @@ const columns = computed<DataTableColumns<UserInfo>>(() => [
     title: t('users.colShare'),
     key: 'share',
     render: (u) =>
-      h(
-        NButton,
-        { size: 'small', disabled: !u.hasSecret, onClick: () => (shareUser.value = u.name) },
-        { default: () => (u.hasSecret ? t('users.share') : t('users.noPassword')) },
-      ),
+      h(NSpace, { align: 'center', wrap: false }, {
+        default: () => [
+          h(
+            NButton,
+            { size: 'small', disabled: !u.hasSecret, onClick: () => (shareUser.value = u.name) },
+            { default: () => (u.hasSecret ? t('users.share') : t('users.noPassword')) },
+          ),
+          ...(u.hasSubscription
+            ? [h(NTag, { size: 'small', round: true, type: 'info' }, { default: () => t('users.subActive') })]
+            : []),
+        ],
+      }),
   },
   {
     title: t('common.actions'),
