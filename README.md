@@ -17,7 +17,7 @@ bundles and supervises `mita`.
   <img src="docs/screenshots/users.png" width="49%" alt="Users" />
   <img src="docs/screenshots/routing.png" width="49%" alt="Routing" />
   <img src="docs/screenshots/advanced.png" width="49%" alt="Advanced tuning" />
-  <img src="docs/screenshots/share.png" width="49%" alt="Share links and QR" />
+  <img src="docs/screenshots/share.png" width="49%" alt="Connect: subscriptions, links and QR" />
 </p>
 
 <p align="center">
@@ -31,10 +31,13 @@ bundles and supervises `mita`.
 - **Users & quotas** - CRUD mieru users, traffic quotas, private-IP toggle.
 - **Network** - port bindings (single ports and ranges, TCP/UDP), MTU, logging.
 - **Dashboard** - mita status, live sessions, traffic, logs; restart from the UI.
-- **Sharing** - per-user `mieru://` / `mierus://` links, QR codes, and expiring
-  tokenized links on a separate path. See [sharing](docs/guides/sharing-configs.md).
-- **Outbound routing & GeoIP** - SOCKS5 outbounds and rules by domain, CIDR, or
-  GeoIP category (xray `geoip.dat`). See [routing](docs/guides/geoip-routing.md).
+- **Sharing & subscriptions** - per-user `mieru://` / `mierus://` links and QR
+  codes, expiring tokenized links, and permanent auto-refreshing subscriptions
+  (Clash/Mihomo profile or native link list) on their own path or port.
+  See [sharing](docs/guides/sharing-configs.md).
+- **Outbound routing & Geo** - SOCKS5 outbounds and rules by domain, CIDR,
+  GeoIP category (xray `geoip.dat`), or GeoSite domain category (`geosite.dat`).
+  See [routing](docs/guides/geoip-routing.md).
 - **Panel chaining** - route egress through another panel with a pasted key.
   See [chaining](docs/guides/chaining-panels.md).
 - **Advanced mieru tuning** - traffic obfuscation (fragmentation, nonce,
@@ -88,12 +91,13 @@ First login is `admin` with the printed password. Change it under **Settings**.
    proxy, the Panel URL.
 2. **Network**: add a port binding (open it in your firewall / `PROXY_PORTS`).
 3. **Users**: add a user; the proxy starts once there's a user and a port.
-4. **Users → Share**: hand out the link or QR.
+4. **Users → Connect**: hand out a subscription link, a one-off link, or a QR.
 
 ## Client apps
 
-Users connect with any mieru-capable client: open the **Share** dialog, then
-import the `mieru://` / `mierus://` link or scan the QR. Recommended apps:
+Users connect with any mieru-capable client: open the **Connect** dialog, then
+add the subscription URL, or import the `mieru://` / `mierus://` link or scan
+the QR. Recommended apps:
 
 - **Android** — [NekoBox](https://github.com/MatsuriDayo/NekoBoxForAndroid) (+ [mieru plugin](https://github.com/enfein/NekoBoxPlugins)), [Exclave](https://github.com/dyhkwong/Exclave), [Karing](https://karing.app/), or [ClashMi](https://clashmi.app/)
 - **iOS** — [Shadowrocket](https://apps.apple.com/app/id932747118), [Karing](https://karing.app/), or [ClashMi](https://clashmi.app/)
@@ -101,13 +105,13 @@ import the `mieru://` / `mierus://` link or scan the QR. Recommended apps:
 
 mieru maintains the [full, up-to-date client list](https://github.com/enfein/mieru#third-party-client-software).
 
-For Clash-family apps (Mihomo Party, Clash Verge Rev, FlClash, ClashMi — anything on mihomo ≥ 1.19.0), the **Subscription** tab in the Share dialog issues a permanent URL that serves a ready-to-import Clash profile and auto-refreshes in the client. The same URL with `?format=mierus` or `?format=mieru` returns the native links as a base64 line list for URI-subscription clients (NekoBox/Exclave with the mieru plugin), and `?flavor=proxies` returns a proxies-only document for `proxy-provider` setups.
+For Clash-family apps (Mihomo Party, Clash Verge Rev, FlClash, ClashMi — anything on mihomo ≥ 1.19.0), the **Subscription** tab in the Connect dialog issues a permanent URL that serves a ready-to-import Clash profile and auto-refreshes in the client. The same URL with `?format=mierus` or `?format=mieru` returns the native links as a base64 line list for URI-subscription clients (NekoBox/Exclave with the mieru plugin), and `?flavor=proxies` returns a proxies-only document for `proxy-provider` setups.
 
 ## Configuration
 
 All options live in `.env` - see [`.env.example`](.env.example) for the full,
-commented list (ports, admin, TLS, panel URL, base path, share path, GeoIP,
-metrics). `docker compose` reads `.env` automatically.
+commented list (ports, admin, TLS, panel URL, base path, share/subscription
+path and port, GeoIP, metrics). `docker compose` reads `.env` automatically.
 
 For local compose tweaks (extra networks, published ports, mounts, limits)
 copy [`docker-compose.override.example.yml`](docker-compose.override.example.yml)

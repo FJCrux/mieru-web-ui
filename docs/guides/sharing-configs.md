@@ -5,11 +5,13 @@ generates these for you.
 
 ## From the Users page
 
-Click **Share** on a user to get:
+Click **Connect** on a user to open a dialog with three tabs:
 
-- a **mierus://** link and QR code (simple format),
-- a **mieru://** link and QR code (full config),
-- the client config JSON to download.
+- **Subscription** - a permanent auto-refreshing link (see below), the primary
+  way to hand out access.
+- **Link** - a one-off expiring page (see below).
+- **Manual import** - the raw **mierus://** / **mieru://** links with QR codes,
+  and the client config JSON to download.
 
 Set **Public host** in Settings first - it's the address clients connect to.
 
