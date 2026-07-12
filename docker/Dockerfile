@@ -4,7 +4,7 @@
 # gRPC stubs; this image provides the daemon - they must match). The canonical
 # source is go.mod; `make docker` passes its version here automatically and
 # `make check-version` guards against drift. Bump both with scripts/update-mieru.sh.
-ARG MITA_VERSION=v3.34.0
+ARG MITA_VERSION=v3.34.1
 
 # Build stages run on the build platform and cross-compile for the target, so
 # a multi-arch build (amd64 + arm64) needs no QEMU emulation.

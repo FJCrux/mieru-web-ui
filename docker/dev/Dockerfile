@@ -3,7 +3,7 @@
 # unix sockets with the host. Production image lives in docker/Dockerfile.
 #
 # MITA_VERSION must match go.mod; see scripts/update-mieru.sh + make check-version.
-ARG MITA_VERSION=v3.34.0
+ARG MITA_VERSION=v3.34.1
 FROM ghcr.io/enfein/mita:${MITA_VERSION}
 
 USER root
